@@ -1,35 +1,37 @@
 {
-  "name": "kusama-genesis-spec",
+  "name": "chainspec-generator",
   "version": "1.0.0",
-  "description": "Genesis generation and chain state verification tool for Kusama.",
+  "description": "Generates the chainspec for Polkadot.",
   "main": "index.js",
   "scripts": {
+    "clean": "rm block-0-state.csv polkadot.json",
     "lint": "tsc --noEmit && eslint 'src/**/*.{ts,tsx}' --quiet",
     "lint:fix": "tsc --noEmit && eslint 'src/**/*.{ts,tsx}' --quiet --fix",
     "genesis": "ts-node src/index genesis",
-    "verify": "node index.js verify",
+    "verify": "ts-node src/index verify",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
-    "Kusama",
     "Polkadot",
+    "Kusama",
     "Blockchain"
   ],
   "author": "Web3 Foundation",
-  "license": "ISC",
+  "license": "GPL-3.0",
   "dependencies": {
-    "@polkadot/api": "^1.11.1",
-    "@polkadot/keyring": "^2.8.1",
-    "@polkadot/util": "^2.8.1",
-    "@typescript-eslint/eslint-plugin": "^2.29.0",
-    "@typescript-eslint/parser": "^2.29.0",
+    "@polkadot/api": "^1.15.1",
+    "@polkadot/keyring": "^2.10.1",
+    "@polkadot/util": "^2.10.1",
+    "@typescript-eslint/eslint-plugin": "^3.0.0",
+    "@typescript-eslint/parser": "^3.0.0",
     "bignumber.js": "^9.0.0",
-    "commander": "^5.0.0",
-    "eslint": "^6.8.0",
-    "eslint-config-prettier": "^6.10.1",
+    "commander": "^5.1.0",
+    "eslint": "^7.1.0",
+    "eslint-config-prettier": "^6.11.0",
     "eslint-plugin-prettier": "^3.1.3",
-    "prettier": "^2.0.4",
-    "typescript": "^3.8.3",
-    "web3": "^1.2.6"
+    "prettier": "^2.0.5",
+    "ts-node": "^8.9.0",
+    "typescript": "^3.9.3",
+    "web3": "^1.2.8"
   }
 }

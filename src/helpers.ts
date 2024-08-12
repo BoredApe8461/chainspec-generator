@@ -1,5 +1,10 @@
 import BN from "bn.js";
 import Web3 from "web3";
+import * as fs from "fs";
+import * as Keyring from "@polkadot/keyring";
+import * as Util from "@polkadot/util";
+
+const utils = new Web3().utils;
 
 // Just a more sane wrapper for any to give some structure to Web3 types.
 type Contract = any;
@@ -16,13 +21,15 @@ type Claimer = {
   balance: BN;
   index: number;
   vested: BN;
+  ethAddress: string;
 };
 
 const w3Util = new Web3().utils;
 
 /// Ethereum Mainnet Contracts
 const DOTAllocationIndicator = "0xb59f67A8BfF5d8Cd03f6AC17265c550Ed8F33907";
-const KusamaClaims = "0x9a1B58399EdEBd0606420045fEa0347c24fB86c2";
+const KusamaGenesisHash =
+  "0xb0a8d493285c2df73290dfb7e61f870f17b41801197a149ca93654499ea3dafe";
 
 const DotClaimsABI = [
   {
@@ -382,7 +389,7 @@ export const getW3 = (providerURL = InfuraMainnet): Web3 => {
 
 export const getClaimsContract = (
   w3: any,
-  address = KusamaClaims,
+  address: string,
   claimsABI = DotClaimsABI
 ): Contract => {
   return new w3.eth.Contract(claimsABI, address);
@@ -396,12 +403,31 @@ export const getFrozenTokenContract = (
   return new w3.eth.Contract(frozenTokenABI, address);
 };
 
+export const detectASCII = (pubkey: string): boolean => {
+  const chars = [];
+  for (let i = 0; i < pubkey.length; i += 2) {
+    const cur = pubkey.slice(i, i + 2);
+    if (cur === "0x") continue;
+    else chars.push(String.fromCharCode(Number("0x" + cur)));
+  }
+
+  const maybeAddress = chars.join("");
+  const isASCII = /^[a-z0-9]+$/i.test(maybeAddress);
+
+  return isASCII;
+};
+
 export const getTokenHolderData = async (
   frozenTokenContract: any,
   claimsContract: any,
   atBlock = "latest"
 ): Promise<Map<string, TokenHolder>> => {
   const tokenHolders = new Map();
+
+  tokenHolders.set("0x00b46c2526e227482e2EbB8f4C69E4674d262E75", {
+    balance: utils.toBN("10000000000"),
+    vested: utils.toBN("0"),
+  });
 
   const transferEvents = await frozenTokenContract.getPastEvents("Transfer", {
     fromBlock: "0",
@@ -413,6 +439,11 @@ export const getTokenHolderData = async (
 
     // Deal with the sending address.
     if (tokenHolders.has(from)) {
+      assert(
+        from === FrozenTokenAdmin ||
+          from === "0x54a2d42a40F51259DedD1978F6c118a0f0Eff078",
+        `Seen a new send from an account that's not the admin. Sender: ${from}`
+      );
       // We've seen this sending address before.
       const data = tokenHolders.get(from);
       const newBalance = data.balance.sub(w3Util.toBN(value));
@@ -423,12 +454,7 @@ export const getTokenHolderData = async (
       tokenHolders.set(from, newData);
     } else {
       // First time we've seen this sending address.
-      assert(
-        from === FrozenTokenAdmin,
-        "Seen a new send from an account that's not the admin."
-      );
-
-      tokenHolders.set;
+      assert(false, `Should never happen. Sender: ${from}`);
     }
 
     // Deal with the receiving address.
@@ -482,13 +508,11 @@ export const getTokenHolderData = async (
     toBlock: "latest",
   });
 
-  // TODO: Add search for increaseVested events.
   for (const event of vestedEvents) {
-    console.log(JSON.stringify(event));
     const { eth, amount } = event.returnValues;
 
     if (!tokenHolders.has(eth)) {
-      console.log(`Vested Error: ${eth} not picked up with a balance.`);
+      console.log(`Vested Warning: ${eth} not picked up with a balance.`);
       continue;
     }
 
@@ -498,6 +522,37 @@ export const getTokenHolderData = async (
 
     const newData = Object.assign(data, {
       vested: w3Util.toBN(amount),
+    });
+
+    tokenHolders.set(eth, newData);
+  }
+
+  const incVestedEvents = await claimsContract.getPastEvents(
+    "VestedIncreased",
+    {
+      fromBlock: "0",
+      toBlock: "latest",
+    }
+  );
+
+  for (const event of incVestedEvents) {
+    const { eth, newTotal } = event.returnValues;
+    if (!tokenHolders.has(eth)) {
+      console.log(
+        `VestedIncreased Warning: ${eth} not picked up with balances.`
+      );
+      continue;
+    }
+
+    const data = tokenHolders.get(eth);
+
+    assert(
+      data.vested.gt(0),
+      `VestedIncreased Error: ${eth} is not vested already.`
+    );
+
+    const newData = Object.assign(data, {
+      vested: w3Util.toBN(newTotal),
     });
 
     tokenHolders.set(eth, newData);
@@ -538,10 +593,39 @@ export const getClaimers = (
   //  x25519 public key as the key.
   const claimers = new Map();
 
-  for (const [address, holderData] of tokenHolders) {
+  fs.appendFileSync(
+    "block-0-state.csv",
+    "eth_address,amended_address,dot_balance,polkadot_address\n"
+  );
+  for (const [address, holderData] of leftoverTokenHolders) {
     const { balance, index, pubKey, vested, amendedTo } = holderData;
 
+    let encoded = "";
     if (!!pubKey) {
+      encoded = Keyring.encodeAddress(Util.hexToU8a(pubKey), 0);
+    }
+
+    fs.appendFileSync(
+      "block-0-state.csv",
+      `${address},${amendedTo},${balance
+        .mul(utils.toBN(10 ** 9))
+        .toString()},${encoded}\n`
+    );
+
+    if (!!pubKey) {
+      if (detectASCII(pubKey)) {
+        // Ignore this claim - it was due to a mistake during the pre-genesis
+        // claiming process.
+        console.log(`Ignoring claim for full ASCII pubkey: ${pubKey}`);
+        continue;
+      }
+      if (pubKey === KusamaGenesisHash) {
+        // Another mistake made during pre-genesis claims - someone claimed
+        // to the Kusama genesis block hash instead of a public key.
+        console.log(`Ignoring claim for Kusama genesis hash: ${pubKey}`);
+        continue;
+      }
+
       leftoverTokenHolders.delete(address);
       if (claimers.has(pubKey)) {
         // A claim has already been made to this pubkey, we augment
@@ -552,6 +636,7 @@ export const getClaimers = (
           balance: data.balance.add(balance),
           index: data.index > index ? index : data.index,
           vested: data.vested.add(vested),
+          ethAddress: data.ethAddress,
         };
 
         claimers.set(pubKey, newData);
@@ -561,9 +646,15 @@ export const getClaimers = (
           balance,
           index,
           vested,
+          ethAddress: address,
         });
       }
-    } else if (amendedTo) {
+    }
+  }
+
+  for (const [address, holderData] of leftoverTokenHolders) {
+    const { balance, index, pubKey, vested, amendedTo } = holderData;
+    if (amendedTo) {
       leftoverTokenHolders.delete(address);
 
       if (leftoverTokenHolders.has(amendedTo)) {
